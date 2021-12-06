@@ -20,9 +20,11 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <sys/uio.h>
+#include <hiredis/hiredis.h>
 
 #include "../locker/locker.h"
-#include "../CGImysql/sql_connection_pool.h"
+//#include "../CGImysql/sql_connection_pool.h"
+#include "../redis/redis.h"
 
 class http_conn{
 public:
@@ -32,7 +34,10 @@ public:
 
 	static int m_epollfd;
 	static int m_user_count;
-	MYSQL* mysql;
+	//MYSQL* mysql;
+	redisContext* r_conn;  
+	redisReply* r_reply;
+
 
 	enum METHOD{
 		GET = 0,
@@ -136,7 +141,9 @@ public:
 	sockaddr_in *get_address(){
 		return &m_address;
 	}
-	void initmysql_result(connection_pool *connPool);
+	//void initmysql_result(connection_pool *connPool);
+	//void get_redis_result(const char* format,...);
+	void init_redispool(redis_pool* conn_pool);
 	
 };
 

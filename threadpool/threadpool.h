@@ -8,7 +8,13 @@
 #include <pthread.h>
 
 #include "../locker/locker.h"
-#include "../CGImysql/sql_connection_pool.h"
+
+
+//#include "../CGImysql/sql_connection_pool.h"
+
+#include "../redis/redis.h"
+
+
 
 template <typename T>
 class threadpool{
@@ -20,7 +26,11 @@ private:
 	locker m_queuelocker;      //锁
 	sem m_queuestat;           //任务数
 	bool m_stop;               //是否结束线程
-	connection_pool* m_connPool;   
+
+	//connection_pool* m_connPool;
+	redis_pool* m_connPool;   
+
+
 
 	static void* worker(void* arg){
 		threadpool *pool = (threadpool*) arg;
@@ -41,7 +51,7 @@ private:
 			m_queuelocker.unlock();
 			if(!request) continue;
 
-			connectionRAII mysqlcon(&request->mysql, m_connPool);
+			connectionRAII rediscon(&request->r_conn, m_connPool);
 
 			request->process();
 		}
@@ -49,7 +59,7 @@ private:
 
 
 public:
-	threadpool(connection_pool *connPool, int thread_number = 8, int max_request = 10000){
+	threadpool(redis_pool *connPool, int thread_number = 8, int max_request = 10000){
 		m_thread_number = thread_number;
 		m_max_requests = max_request;
 		m_stop = false;

@@ -1,8 +1,9 @@
 #include "http_conn.h"
 #include "../log/log.h"
 #include <map>
-#include <mysql/mysql.h>
+//#include <mysql/mysql.h>
 #include <fstream>
+
 
 //#define connfdET //边缘触发非阻塞
 #define connfdLT //水平触发阻塞
@@ -25,38 +26,44 @@ const char *error_500_form = "There was an unusual problem serving the request f
 const char *doc_root = "/home/icebob/WebServer/root";
 
 //将表中的用户名和密码放入map
-map<string, string> users;
+//map<string, string> users;
 locker m_lock;
+redis_pool* connPool;  //redis连接池
 
-void http_conn::initmysql_result(connection_pool *connPool)
-{
-    //先从连接池中取一个连接
-    MYSQL *mysql = NULL;
-    connectionRAII mysqlcon(&mysql, connPool);
-
-    //在user表中检索username，passwd数据，浏览器端输入
-    if (mysql_query(mysql, "SELECT username,passwd FROM user"))
-    {
-        LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
-    }
-
-    //从表中检索完整的结果集
-    MYSQL_RES *result = mysql_store_result(mysql);
-
-    //返回结果集中的列数
-    int num_fields = mysql_num_fields(result);
-
-    //返回所有字段结构的数组
-    MYSQL_FIELD *fields = mysql_fetch_fields(result);
-
-    //从结果集中获取下一行，将对应的用户名和密码，存入map中
-    while (MYSQL_ROW row = mysql_fetch_row(result))
-    {
-        string temp1(row[0]);
-        string temp2(row[1]);
-        users[temp1] = temp2;
-    }
+void http_conn::init_redispool(redis_pool* conn_pool){
+    connPool = conn_pool;
 }
+// void http_conn::initmysql_result(connection_pool *connPool)
+// {
+//     //先从连接池中取一个连接
+//     MYSQL *mysql = NULL;
+//     connectionRAII mysqlcon(&mysql, connPool);
+
+//     //在user表中检索username，passwd数据，浏览器端输入
+//     if (mysql_query(mysql, "SELECT username,passwd FROM user"))
+//     {
+//         LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
+//     }
+
+//     //从表中检索完整的结果集
+//     MYSQL_RES *result = mysql_store_result(mysql);
+
+//     //返回结果集中的列数
+//     int num_fields = mysql_num_fields(result);
+
+//     //返回所有字段结构的数组
+//     MYSQL_FIELD *fields = mysql_fetch_fields(result);
+
+//     //从结果集中获取下一行，将对应的用户名和密码，存入map中
+//     while (MYSQL_ROW row = mysql_fetch_row(result))
+//     {
+//         string temp1(row[0]);
+//         string temp2(row[1]);
+//         users[temp1] = temp2;
+//     }
+// }
+
+
 
 //对文件描述符设置非阻塞
 int set_nonblocking(int fd)
@@ -149,7 +156,10 @@ void http_conn::init(int sockfd, const sockaddr_in &addr)
 //check_state默认为分析请求行状态
 void http_conn::init()
 {
-    mysql = NULL;
+    //mysql = NULL;
+    r_conn = NULL;
+    r_reply = NULL;
+
     bytes_to_send = 0;
     bytes_have_send = 0;
     m_check_state = CHECK_STATE_REQUESTLINE;
@@ -356,11 +366,11 @@ http_conn::HTTP_CODE http_conn::process_read()
     LINE_STATUS line_status = LINE_OK;
     HTTP_CODE ret = NO_REQUEST;
     char *text = 0;
-    printf("process_read:m_check_state:%d\n",m_check_state);
+    //printf("process_read:m_check_state:%d\n",m_check_state);
     while ((m_check_state == CHECK_STATE_CONTENT && line_status == LINE_OK) || ((line_status = parse_line()) == LINE_OK))
     {
         text = get_line();
-        printf("process_read:%s\n", text);
+        //printf("process_read:%s\n", text);
         m_start_line = m_checked_idx;
         LOG_INFO("%s", text);
         Log::get_instance()->flush();
@@ -435,40 +445,87 @@ http_conn::HTTP_CODE http_conn::do_request()
         //同步线程登录校验
         if (*(p + 1) == '3')
         {
+
+            r_reply = (redisReply*)redisCommand(r_conn, "hexists users %s", name);
+            if(r_reply == NULL){
+                LOG_ERROR("REDIS COMMAND ERROR: HEXISTS users %s\n", name);
+                freeReplyObject(r_reply);
+            }
+            else if(r_reply->integer != 0){
+                strcpy(m_url,"/registerError.html");
+                freeReplyObject(r_reply);
+            }
+            else{
+                freeReplyObject(r_reply);
+                r_reply = (redisReply*)redisCommand(r_conn, "hset users %s %s",name,password);
+                if(r_reply == NULL){
+                    LOG_ERROR("REDIS COMMAND ERROR: HSET users %s\n", name);
+                }
+                else{
+                    strcpy(m_url, "/log.html");
+                }
+                freeReplyObject(r_reply);
+            }
+            
             //如果是注册，先检测数据库中是否有重名的
             //没有重名的，进行增加数据
-            char *sql_insert = (char *)malloc(sizeof(char) * 200);
-            strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
-            strcat(sql_insert, "'");
-            strcat(sql_insert, name);
-            strcat(sql_insert, "', '");
-            strcat(sql_insert, password);
-            strcat(sql_insert, "')");
+            // char *sql_insert = (char *)malloc(sizeof(char) * 200);
+            // strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
+            // strcat(sql_insert, "'");
+            // strcat(sql_insert, name);
+            // strcat(sql_insert, "', '");
+            // strcat(sql_insert, password);
+            // strcat(sql_insert, "')");
+            // if (users.find(name) == users.end())
+            // {
+            //     m_lock.lock();
+            //     int res = mysql_query(mysql, sql_insert);
+            //     users.insert(pair<string, string>(name, password));
+            //     m_lock.unlock();
 
-            if (users.find(name) == users.end())
-            {
-
-                m_lock.lock();
-                int res = mysql_query(mysql, sql_insert);
-                users.insert(pair<string, string>(name, password));
-                m_lock.unlock();
-
-                if (!res)
-                    strcpy(m_url, "/log.html");
-                else
-                    strcpy(m_url, "/registerError.html");
-            }
-            else
-                strcpy(m_url, "/registerError.html");
+            //     if (!res)
+            //         strcpy(m_url, "/log.html");
+            //     else
+            //         strcpy(m_url, "/registerError.html");
+            // }
+            // else
+            //     strcpy(m_url, "/registerError.html");
         }
         //如果是登录，直接判断
         //若浏览器端输入的用户名和密码在表中可以查找到，返回1，否则返回0
         else if (*(p + 1) == '2')
         {
-            if (users.find(name) != users.end() && users[name] == password)
-                strcpy(m_url, "/welcome.html");
-            else
+            r_reply = (redisReply*)redisCommand(r_conn,"hexists users %s", name);
+            if(r_reply == NULL){
+                LOG_ERROR("REDIS COMMAND ERROR: HEXISTS users %s\n", name);
+                freeReplyObject(r_reply);
+            }
+            else if(r_reply->integer == 0){
                 strcpy(m_url, "/logError.html");
+                freeReplyObject(r_reply);
+            }
+            else{
+                freeReplyObject(r_reply);
+                r_reply = (redisReply*)redisCommand(r_conn, "hget users %s", name);
+                if(r_reply == NULL){
+                    printf("r_reply=NULL:%lld,%s\n", r_reply->type,r_reply->str);
+                    LOG_ERROR("REDIS COMMAND ERROR: HGET users %s\n", name);
+                }
+                else{
+                    //printf("password=%s,str=%s,len1=%d,len2=%d\n",password,r_reply->str,strlen(password),strlen(r_reply->str));
+                    if(strcmp(r_reply->str,password)==0)
+                        strcpy(m_url, "/welcome.html");
+                    else
+                        strcpy(m_url, "/logError.html");
+                }
+                freeReplyObject(r_reply);
+
+            }
+
+            // if (users.find(name) != users.end() && users[name] == password)
+            //     strcpy(m_url, "/welcome.html");
+            // else
+            //     strcpy(m_url, "/logError.html");
         }
     }
 

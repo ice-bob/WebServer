@@ -72,7 +72,7 @@ bool redis_pool::ReleaseConnection(redisContext* r_conn){
 
 void redis_pool::DestroyPool(){
 	lock.lock();
-	for(auto it=connList.begin();it!=connect.end();it++){
+	for(auto it=connList.begin();it!=connList.end();it++){
 		redisFree(*it);
 	}
 	FreeConn = 0;

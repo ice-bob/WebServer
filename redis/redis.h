@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <hiredis/hiredis.h>
 
-#include "locker/locker.h"
+#include "../locker/locker.h"
 
 using namespace std;
 
@@ -20,15 +20,15 @@ private:
 	locker lock;
 	sem reserve;
 
-	list<redisContext*> r_conn;
-	redisReply* r_reply;
+	list<redisContext*> connList;
+//	redisReply* r_reply;
 
 	string host;
 	int port;
 	
 public:
 	redisContext* GetConnection();
-	bool ReleaseConnection();
+	bool ReleaseConnection(redisContext* r_conn);
 	int GetFreeConn();
 	void DestroyPool();
 
